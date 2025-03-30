@@ -1,38 +1,47 @@
 local record_module = {}
 
-function record_module.add(records)
-	for obby_name, types in pairs(records) do
-		for mode, entry in pairs(types) do
-			local player_name = entry[1]
-			local new_time = tonumber(entry[2])
-			if not new_time then
-				continue
+function record_module.add(data)
+	local ctt2_mode = data.CTT2Mode == true
+
+	for obby_name, modes in pairs(data) do
+		if obby_name == "CTT2Mode" then
+			continue
+		end
+
+		for mode, values in pairs(modes) do
+			local player = values[1]
+			local time = values[2]
+			local bounce = mode == "Bounce"
+
+			local leaderboard = nil
+
+			if ctt2_mode then
+				local folder = game.Workspace:FindFirstChild("MISC")
+				if folder then
+					folder = folder:FindFirstChild("LBS")
+					if folder then
+						local obby_folder = folder:FindFirstChild(obby_name:upper())
+						if obby_folder then
+							local subfolder = obby_folder:FindFirstChild(bounce and "B" or "NB")
+							if subfolder then
+								leaderboard = subfolder:FindFirstChild("Leaderboard")
+							end
+						end
+					end
+				end
+			else
+				local suffix = bounce and "BounceLeaderboard" or "BouncelessLeaderboard"
+				leaderboard = game.Workspace:FindFirstChild(obby_name .. suffix)
 			end
 
-			local leaderboard_name = obby_name .. mode .. "Leaderboard"
-			local leaderboard = workspace:FindFirstChild(leaderboard_name)
-
 			if leaderboard then
-				local name_holder = leaderboard:FindFirstChild("HolderName")
-				local time_holder = leaderboard:FindFirstChild("RecordTime")
-
-				if
-					name_holder
-					and time_holder
-					and name_holder:FindFirstChild("SurfaceGui")
-					and time_holder:FindFirstChild("SurfaceGui")
-				then
-					local name_label = name_holder.SurfaceGui:FindFirstChild("Label")
-					local time_label = time_holder.SurfaceGui:FindFirstChild("Label")
-
-					local current_time = tonumber(time_label and time_label.Text or "")
-					if not current_time or new_time < current_time then
-						if name_label then
-							name_label.Text = player_name
-						end
-						if time_label then
-							time_label.Text = string.format("%.3f", new_time)
-						end
+				local name_label = leaderboard:FindFirstChild("plr")
+				local time_label = leaderboard:FindFirstChild("time")
+				if name_label and name_label:IsA("TextLabel") and time_label and time_label:IsA("TextLabel") then
+					local current_time = tonumber(time_label.Text)
+					if not current_time or time < current_time then
+						name_label.Text = player
+						time_label.Text = tostring(time)
 					end
 				end
 			end
@@ -40,55 +49,85 @@ function record_module.add(records)
 	end
 end
 
-function record_module.get_records()
+function record_module.get_records(ctt2_mode)
 	local records = {}
 
-	for _, leaderboard in ipairs(workspace:GetChildren()) do
-		if leaderboard:IsA("Folder") or leaderboard:IsA("Model") then
-			local name = leaderboard.Name
-			local mode = nil
-			local obby_name = nil
+	local function insert_record(obby_name, bounce, player, time)
+		if not records[obby_name] then
+			records[obby_name] = {}
+		end
+		records[obby_name][bounce and "Bounce" or "Bounceless"] = { player, time }
+	end
 
-			if name:find("BouncelessLeaderboard") then
-				mode = "Bounceless"
-				obby_name = name:gsub("BouncelessLeaderboard", "")
-			elseif name:find("BounceLeaderboard") then
-				mode = "Bounce"
-				obby_name = name:gsub("BounceLeaderboard", "")
+	local function is_valid_label(label)
+		return label and label:IsA("TextLabel") and label.Text and label.Text ~= "N/A" and label.Text ~= ""
+	end
+
+	if ctt2_mode then
+		local lbs_folder = game.Workspace:FindFirstChild("MISC")
+		if lbs_folder then
+			lbs_folder = lbs_folder:FindFirstChild("LBS")
+			if lbs_folder then
+				for _, obby in ipairs(lbs_folder:GetChildren()) do
+					if obby:IsA("Folder") then
+						for _, bounce_data in ipairs({ { true, "B" }, { false, "NB" } }) do
+							local bounce = bounce_data[1]
+							local tag = bounce_data[2]
+							local path = obby:FindFirstChild(tag)
+							local leaderboard = path and path:FindFirstChild("Leaderboard")
+							if leaderboard then
+								local plr = leaderboard:FindFirstChild("plr")
+								local time = leaderboard:FindFirstChild("time")
+								if is_valid_label(plr) and is_valid_label(time) then
+									local player = plr.Text
+									local t = tonumber(time.Text)
+									if t then
+										insert_record(obby.Name, bounce, player, t)
+									end
+								end
+							end
+						end
+					end
+				end
 			end
+		end
+	else
+		for _, obj in ipairs(game.Workspace:GetChildren()) do
+			if obj:IsA("Folder") or obj:IsA("Model") then
+				local name = obj.Name
+				local bounce, obby_name = nil, nil
 
-			if mode and obby_name then
-				local name_holder = leaderboard:FindFirstChild("HolderName")
-				local time_holder = leaderboard:FindFirstChild("RecordTime")
+				if name:find("BounceLeaderboard") then
+					bounce = true
+					obby_name = name:gsub("BounceLeaderboard", "")
+				elseif name:find("BouncelessLeaderboard") then
+					bounce = false
+					obby_name = name:gsub("BouncelessLeaderboard", "")
+				end
 
-				if
-					name_holder
-					and time_holder
-					and name_holder:FindFirstChild("SurfaceGui")
-					and time_holder:FindFirstChild("SurfaceGui")
-				then
-					local name_label = name_holder.SurfaceGui:FindFirstChild("Label")
-					local time_label = time_holder.SurfaceGui:FindFirstChild("Label")
-
-					local player = name_label and name_label.Text or ""
-					local time_text = time_label and time_label.Text or ""
-					local time = tonumber(time_text)
-
-					if player:lower() ~= "n/a" and time_text:lower() ~= "n/a" and player ~= "" and time then
-						records[obby_name] = records[obby_name] or {}
-						records[obby_name][mode] = { player, time }
+				if bounce ~= nil and obby_name then
+					local leaderboard = obj:FindFirstChild("Leaderboard")
+					if leaderboard then
+						local plr = leaderboard:FindFirstChild("plr")
+						local time = leaderboard:FindFirstChild("time")
+						if is_valid_label(plr) and is_valid_label(time) then
+							local player = plr.Text
+							local t = tonumber(time.Text)
+							if t then
+								insert_record(obby_name, bounce, player, t)
+							end
+						end
 					end
 				end
 			end
 		end
 	end
 
-	-- convert to formatted string
-	local output = "{\n"
-	for obby_name, types in pairs(records) do
-		output ..= string.format('  ["%s"] = {\n', obby_name)
-		for mode, data in pairs(types) do
-			output ..= string.format('    ["%s"] = { "%s", %.3f },\n', mode, data[1], data[2])
+	local output = '{\n  ["CTT2Mode"] = ' .. tostring(ctt2_mode) .. ",\n"
+	for obby_name, modes in pairs(records) do
+		output ..= '  ["' .. obby_name .. '"] = {\n'
+		for mode, record in pairs(modes) do
+			output ..= string.format('    ["%s"] = { "%s", %.3f },\n', mode, record[1], record[2])
 		end
 		output ..= "  },\n"
 	end

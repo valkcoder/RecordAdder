@@ -17,6 +17,7 @@ struct AppState {
     time_input: String,
     obby_input: String,
     is_bounce: bool,
+    ctt2_mode: bool,
     records: Vec<Record>,
     show_help: bool,
 }
@@ -67,14 +68,33 @@ impl AppState {
                     .eval()
                     .and_then(|table: mlua::Table| {
                         let mut out = Vec::new();
-                        for pair in table.pairs::<String, mlua::Table>() {
-                            let (obby_name, mode_table) = pair?;
-                            for mode_pair in mode_table.pairs::<String, mlua::Table>() {
-                                let (mode, data) = mode_pair?;
-                                let bounce = mode == "Bounce";
-                                let player = data.get::<usize, String>(1)?;
-                                let time = data.get::<usize, f32>(2)?;
-                                out.push((obby_name.clone(), bounce, player, time));
+                        for pair in table.pairs::<mlua::Value, mlua::Value>() {
+                            if let Ok((key, value)) = pair {
+                                if let mlua::Value::String(key_str) = &key {
+                                    if key_str.to_str().ok() == Some("CTT2Mode") {
+                                        continue;
+                                    }
+                                }
+
+                                let obby_name = match &key {
+                                    mlua::Value::String(s) => {
+                                        s.to_str().unwrap_or_default().to_string()
+                                    }
+                                    _ => continue,
+                                };
+
+                                let mode_table = match value {
+                                    mlua::Value::Table(t) => t,
+                                    _ => continue,
+                                };
+
+                                for mode_pair in mode_table.pairs::<String, mlua::Table>() {
+                                    let (mode, data) = mode_pair?;
+                                    let bounce = mode == "Bounce";
+                                    let player = data.get::<usize, String>(1)?;
+                                    let time = data.get::<usize, f32>(2)?;
+                                    out.push((obby_name.clone(), bounce, player, time));
+                                }
                             }
                         }
                         Ok(out)
@@ -104,6 +124,10 @@ impl AppState {
         }
 
         let mut output = String::from("{\n");
+        output.push_str(&format!(
+            "  [\"CTT2Mode\"] = {},\n",
+            if self.ctt2_mode { "true" } else { "false" }
+        ));
         for (obby, types) in map {
             output.push_str(&format!("  [\"{}\"] = {{\n", obby));
             if let Some((player, time)) = types.get("Bounce") {
@@ -131,106 +155,114 @@ impl AppState {
 impl eframe::App for AppState {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
-            let style = ui.style_mut();
-            style.spacing.item_spacing = egui::vec2(12.0, 12.0);
-            style.text_styles = [
-                (egui::TextStyle::Heading, egui::FontId::proportional(30.0)),
-                (egui::TextStyle::Body, egui::FontId::proportional(22.0)),
-                (egui::TextStyle::Button, egui::FontId::proportional(22.0)),
-                (egui::TextStyle::Small, egui::FontId::proportional(18.0)),
-            ]
-            .into();
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                let style = ui.style_mut();
+                style.spacing.item_spacing = egui::vec2(12.0, 12.0);
+                style.text_styles = [
+                    (egui::TextStyle::Heading, egui::FontId::proportional(30.0)),
+                    (egui::TextStyle::Body, egui::FontId::proportional(22.0)),
+                    (egui::TextStyle::Button, egui::FontId::proportional(22.0)),
+                    (egui::TextStyle::Small, egui::FontId::proportional(18.0)),
+                ]
+                .into();
 
-            if self.show_help {
-                if ui.button("← Back").clicked() {
-                    self.show_help = false;
+                if self.show_help {
+                    if ui.button("← Back").clicked() {
+                        self.show_help = false;
+                    }
+
+                    ui.heading("If you can't see all the text, maximize the window or scroll.");
+
+                    ui.separator();
+
+                    ui.heading("How to Use (Rust App)");
+                    ui.label("1. Enter player name, obby name, and time.");
+                    ui.label("2. Toggle Bounce if it's a bounce record.");
+                    ui.label("3. Click 'Add Record' to add it to the list.");
+                    ui.label("4. Click 'Copy to Clipboard' to export in Lua format.");
+                    ui.label("5. Use 'Import from Clipboard' to paste records from Roblox. (see roblox studio guide)");
+                    ui.label("6. Use the Delete button to remove entries.");
+                    ui.label("7. Use the 'CTT2 Mode' toggle if you're targeting the CTT2 folder structure in Roblox.");
+
+                    ui.separator();
+
+                    ui.heading("How to Use (Roblox Studio)");
+                    ui.label("First of all, you need to download the record module. This app is basically useless without it.");
+                    ui.label("1. Place the module in ReplicatedStorage.Modules.");
+                    ui.label("2. Require it with: require(game.ReplicatedStorage.Modules.RecordModule)");
+                    ui.label("3. To import: require(game.ReplicatedStorage.Modules.RecordModule).add(<table_from_clipboard>)");
+                    ui.label("4. To export: Make a server script with the following content: print(game.ReplicatedStorage.Modules.RecordModule.get_records(true_or_false_for_ctt2mode))");
+                    ui.label("5. If CTT2Mode is true, it will use workspace.MISC.LBS.[OBBYNAME:UPPER()].B or NB");
+                    ui.label("6. If not, it uses the traditional '[ObbyName][Bounce|Bounceless]Leaderboard' format.");
+                    return;
                 }
 
-                ui.heading("If you can't see all the text, maximize the window.");
 
-                ui.separator();
-
-                ui.heading("How to Use (Rust App)");
-                ui.label("1. Enter player name, obby name, and time.");
-                ui.label("2. Toggle Bounce if it's a bounce record.");
-                ui.label("3. Click 'Add Record' to add it to the list.");
-                ui.label("4. Click 'Copy to Clipboard' to export in Lua format.");
-                ui.label("5. Use 'Import from Clipboard' to paste records from Roblox. (see roblox studio guide)");
-                ui.label("6. Use the Delete button to remove entries.");
-
-                ui.separator();
-
-                ui.heading("How to Use (Roblox Studio)");
-                ui.label("First of all, you need to download the record module. This app is basically useless without it.");
-                ui.label("1. Place the module in ReplicatedStorage.Modules.");
-                ui.label("2. Require it with: require(game.ReplicatedStorage.Modules.RecordModule)");
-                ui.label("3. To import: require(game.ReplicatedStorage.Modules.RecordModule).add(<table_from_clipboard>)");
-                ui.label("4. To export: Make a server script with the following content: print(game.ReplicatedStorage.Modules.RecordModule.get_records())");
-                ui.label("5. Ensure each leaderboard is named like '[ObbyName][Bounce|Bounceless]Leaderboard'");
-                ui.label("6. Leaderboards must contain parts HolderName and RecordTime with SurfaceGui > Label.");
-                return;
-            }
-
-            ui.horizontal(|ui| {
-                ui.label("Player Name:");
-                ui.text_edit_singleline(&mut self.player_input);
-            });
-
-            ui.horizontal(|ui| {
-                ui.label("Time (s):");
-                ui.text_edit_singleline(&mut self.time_input);
-            });
-
-            ui.horizontal(|ui| {
-                ui.label("Obby Name:");
-                ui.text_edit_singleline(&mut self.obby_input);
-            });
-
-            ui.checkbox(&mut self.is_bounce, "Bounce");
-
-            if ui.button("Add Record").clicked() {
-                self.add_record();
-            }
-
-            ui.separator();
-            ui.heading("World Records");
-
-            let mut to_delete: Option<usize> = None;
-            for (i, record) in self.records.iter().enumerate() {
                 ui.horizontal(|ui| {
-                    ui.label(format!(
-                        "{} - {} - {} - {:.3}s",
-                        record.obby,
-                        if record.bounce {
-                            "Bounce"
-                        } else {
-                            "Bounceless"
-                        },
-                        record.player,
-                        record.time
-                    ));
-                    if ui.button("Delete").clicked() {
-                        to_delete = Some(i);
-                    }
+                    ui.label("Player Name:");
+                    ui.text_edit_singleline(&mut self.player_input);
                 });
-            }
-            if let Some(i) = to_delete {
-                self.delete_record(i);
-            }
 
-            ui.separator();
-            if ui.button("Copy to Clipboard").clicked() {
-                self.copy_to_clipboard();
-            }
+                ui.horizontal(|ui| {
+                    ui.label("Time (s):");
+                    ui.text_edit_singleline(&mut self.time_input);
+                });
 
-            if ui.button("Import from Clipboard").clicked() {
-                self.import_from_clipboard();
-            }
+                ui.horizontal(|ui| {
+                    ui.label("Obby Name:");
+                    ui.text_edit_singleline(&mut self.obby_input);
+                });
 
-            ui.separator();
-            if ui.button("How to Use").clicked() {
-                self.show_help = true;
-            }
+                ui.checkbox(&mut self.is_bounce, "Bounce");
+
+                if ui.button("Add Record").clicked() {
+                    self.add_record();
+                }
+
+                ui.separator();
+                
+                ui.heading("World Records");
+
+                let mut to_delete: Option<usize> = None;
+                for (i, record) in self.records.iter().enumerate() {
+                    ui.horizontal(|ui| {
+                        ui.label(format!(
+                            "{} - {} - {} - {:.3}s",
+                            record.obby,
+                            if record.bounce {
+                                "Bounce"
+                            } else {
+                                "Bounceless"
+                            },
+                            record.player,
+                            record.time
+                        ));
+                        if ui.button("Delete").clicked() {
+                            to_delete = Some(i);
+                        }
+                    });
+                }
+                if let Some(i) = to_delete {
+                    self.delete_record(i);
+                }
+
+                ui.separator();
+
+                if ui.button("Copy to Clipboard").clicked() {
+                    self.copy_to_clipboard();
+                }
+
+                if ui.button("Import from Clipboard").clicked() {
+                    self.import_from_clipboard();
+                }
+
+                ui.separator();
+
+                ui.checkbox(&mut self.ctt2_mode, "CTT2 Mode");
+                if ui.button("How to Use").clicked() {
+                    self.show_help = true;
+                }
+            });
         });
     }
 }
