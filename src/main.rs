@@ -1,7 +1,7 @@
 use arboard::Clipboard;
 use eframe::egui;
 use mlua::Lua;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Clone)]
 struct Record {
@@ -27,6 +27,7 @@ struct AppState {
     main_ob_bounce: Vec<(String, f32)>,
     main_ob_bounceless: Vec<(String, f32)>,
     main_ob_noplat: Vec<(String, f32)>,
+    obby_names: HashSet<String>,
 }
 
 impl Default for AppState {
@@ -47,6 +48,7 @@ impl Default for AppState {
             main_ob_bounce: Vec::new(),
             main_ob_bounceless: Vec::new(),
             main_ob_noplat: Vec::new(),
+            obby_names: HashSet::new(),
         }
     }
 }
@@ -59,7 +61,9 @@ impl AppState {
             bounce,
             obby: obby.to_string(),
         };
-
+    
+        self.obby_names.insert(obby.to_string()); // track it
+    
         if let Some(existing_index) = self
             .records
             .iter()
@@ -71,22 +75,27 @@ impl AppState {
         } else {
             self.records.push(new_record);
         }
-    }
+    }    
 
     fn add_record(&mut self) {
-        let obby = self.obby_input.clone();
-        let player = self.player_input.clone();
+        let obby = self.obby_input.trim().to_string();
+        let player = self.player_input.trim().to_string();
         let bounce = self.is_bounce;
-
+    
+        if obby.is_empty() || player.is_empty() {
+            return;
+        }
+    
         if let Ok(time) = self.time_input.parse::<f32>() {
             self.add_record_entry(&obby, bounce, &player, time);
+            self.obby_input = obby.clone();
+            self.obby_names.insert(obby);
             self.player_input.clear();
             self.time_input.clear();
             self.obby_input.clear();
             self.is_bounce = false;
         }
-    }
-
+    }    
     fn add_main_ob_record(&mut self, player: String, time: f32, category: &str) {
         let list = match category {
             "Bounce" => &mut self.main_ob_bounce,
@@ -300,8 +309,22 @@ impl eframe::App for AppState {
 
                 ui.horizontal(|ui| {
                     ui.label("Obby Name:");
+                
+                    if !self.obby_names.is_empty() {
+                        egui::ComboBox::from_id_source("obby_dropdown")
+                            .width(160.0)
+                            .selected_text(&self.obby_input)
+                            .show_ui(ui, |ui| {
+                                for obby in &self.obby_names {
+                                    ui.selectable_value(&mut self.obby_input, obby.clone(), obby);
+                                }
+                            });
+                
+                        ui.label("or:");
+                    }
+                
                     ui.text_edit_singleline(&mut self.obby_input);
-                });
+                });                                               
 
                 ui.checkbox(&mut self.is_bounce, "Bounce");
 
