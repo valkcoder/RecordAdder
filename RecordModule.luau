@@ -1,10 +1,76 @@
 local record_module = {}
 
+local MAIN_OBBY_CATEGORIES = {
+	Bounce = "B",
+	Bounceless = "NB",
+	NoPlat = "NT",
+}
+
 function record_module.add(data)
 	local ctt2_mode = data.CTT2Mode == true
 
 	for obby_name, modes in pairs(data) do
 		if obby_name == "CTT2Mode" then
+			continue
+		end
+
+		if obby_name == "MainObby" and ctt2_mode then
+			local base = game.Workspace:FindFirstChild("MISC")
+			if base then
+				base = base:FindFirstChild("LBS")
+			end
+			if base then
+				base = base:FindFirstChild("MO")
+			end
+			if not base then
+				continue
+			end
+
+			local category_map = {
+				Bounce = "B",
+				Bounceless = "NB",
+				NoPlat = "NT",
+			}
+
+			for category, records in pairs(modes) do
+				local tag = category_map[category]
+				if not tag then
+					continue
+				end
+
+				local folder = base:FindFirstChild(tag)
+				if not folder then
+					continue
+				end
+
+				local sf = folder:FindFirstChild("LB")
+				sf = sf and sf:FindFirstChild("Leaderboard")
+				sf = sf and sf:FindFirstChild("ScrollingFrame")
+				if not sf then
+					continue
+				end
+
+				for i = 1, #records do
+					local entry = sf:FindFirstChild(tostring(i))
+					local data = records[i]
+					if entry and data then
+						local plr_field = i == 1 and "plr" or "plr2"
+						local time_field = i == 1 and "time" or "time2"
+
+						local plr_label = entry:FindFirstChild(plr_field)
+						local time_label = entry:FindFirstChild(time_field)
+
+						if plr_label and plr_label:IsA("TextLabel") then
+							plr_label.Text = data[1]
+						end
+
+						if time_label and time_label:IsA("TextLabel") then
+							time_label.Text = string.format("%.3f", data[2])
+						end
+					end
+				end
+			end
+
 			continue
 		end
 
@@ -41,7 +107,7 @@ function record_module.add(data)
 					local current_time = tonumber(time_label.Text)
 					if not current_time or time < current_time then
 						name_label.Text = player
-						time_label.Text = tostring(time)
+						time_label.Text = string.format("%.3f", time)
 					end
 				end
 			end
@@ -68,8 +134,9 @@ function record_module.get_records(ctt2_mode)
 		if lbs_folder then
 			lbs_folder = lbs_folder:FindFirstChild("LBS")
 			if lbs_folder then
+				-- Normal Obbies
 				for _, obby in ipairs(lbs_folder:GetChildren()) do
-					if obby:IsA("Folder") then
+					if obby:IsA("Folder") and obby.Name ~= "MO" then
 						for _, bounce_data in ipairs({ { true, "B" }, { false, "NB" } }) do
 							local bounce = bounce_data[1]
 							local tag = bounce_data[2]
@@ -87,6 +154,47 @@ function record_module.get_records(ctt2_mode)
 								end
 							end
 						end
+					end
+				end
+
+				-- Main Obby
+				local mo_folder = lbs_folder:FindFirstChild("MO")
+				if mo_folder then
+					local main_obby_data = {}
+
+					for cat, tag in pairs(MAIN_OBBY_CATEGORIES) do
+						local folder = mo_folder:FindFirstChild(tag)
+						local scrolling = folder and folder:FindFirstChild("LB")
+						scrolling = scrolling and scrolling:FindFirstChild("Leaderboard")
+						scrolling = scrolling and scrolling:FindFirstChild("ScrollingFrame")
+
+						local results = {}
+
+						if scrolling then
+							for i = 1, 12 do
+								local entry = scrolling:FindFirstChild(tostring(i))
+								if entry then
+									local plr_label = entry:FindFirstChild(i == 1 and "plr" or "plr2")
+									local time_label = entry:FindFirstChild(i == 1 and "time" or "time2")
+
+									local player = plr_label and plr_label:IsA("TextLabel") and plr_label.Text or nil
+									local t = time_label and time_label:IsA("TextLabel") and tonumber(time_label.Text)
+										or nil
+
+									if player and player ~= "" and player ~= "N/A" and t then
+										table.insert(results, { player, t })
+									end
+								end
+							end
+						end
+
+						if #results > 0 then
+							main_obby_data[cat] = results
+						end
+					end
+
+					if next(main_obby_data) then
+						records.MainObby = main_obby_data
 					end
 				end
 			end
@@ -125,11 +233,23 @@ function record_module.get_records(ctt2_mode)
 
 	local output = '{\n  ["CTT2Mode"] = ' .. tostring(ctt2_mode) .. ",\n"
 	for obby_name, modes in pairs(records) do
-		output ..= '  ["' .. obby_name .. '"] = {\n'
-		for mode, record in pairs(modes) do
-			output ..= string.format('    ["%s"] = { "%s", %.3f },\n', mode, record[1], record[2])
+		if obby_name == "MainObby" then
+			output ..= '  ["MainObby"] = {\n'
+			for cat, entries in pairs(modes) do
+				output ..= '    ["' .. cat .. '"] = {\n'
+				for _, entry in ipairs(entries) do
+					output ..= string.format('      { "%s", %.3f },\n', entry[1], entry[2])
+				end
+				output ..= "    },\n"
+			end
+			output ..= "  },\n"
+		else
+			output ..= '  ["' .. obby_name .. '"] = {\n'
+			for mode, record in pairs(modes) do
+				output ..= string.format('    ["%s"] = { "%s", %.3f },\n', mode, record[1], record[2])
+			end
+			output ..= "  },\n"
 		end
-		output ..= "  },\n"
 	end
 	output ..= "}"
 	return output
