@@ -2,6 +2,10 @@ use arboard::Clipboard;
 use eframe::egui;
 use mlua::Lua;
 use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, Mutex};
+use std::thread;
+use tiny_http::{Server, Response};
+use serde::Serialize;
 
 #[derive(Clone)]
 struct Record {
@@ -9,6 +13,15 @@ struct Record {
     time: f32,
     bounce: bool,
     obby: String,
+}
+
+#[derive(Serialize)]
+struct ExportTable {
+    CTT2Mode: bool,
+    #[serde(flatten)]
+    obbies: HashMap<String, HashMap<String, (String, f32)>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    MainObby: Option<HashMap<String, Vec<(String, f32)>>>,
 }
 
 struct AppState {
@@ -28,6 +41,10 @@ struct AppState {
     main_ob_bounceless: Vec<(String, f32)>,
     main_ob_noplat: Vec<(String, f32)>,
     obby_names: HashSet<String>,
+
+    real_time_enabled: bool,
+    http_thread: Option<thread::JoinHandle<()>>,
+    http_data: Arc<Mutex<String>>,
 }
 
 impl Default for AppState {
@@ -49,6 +66,10 @@ impl Default for AppState {
             main_ob_bounceless: Vec::new(),
             main_ob_noplat: Vec::new(),
             obby_names: HashSet::new(),
+
+            real_time_enabled: false,
+            http_thread: None,
+            http_data: Arc::new(Mutex::new("{}".to_string())),
         }
     }
 }
@@ -75,6 +96,42 @@ impl AppState {
         } else {
             self.records.push(new_record);
         }
+    }
+
+    fn generate_json_export(&self) -> String {
+        let mut obbies: HashMap<String, HashMap<String, (String, f32)>> = HashMap::new();
+    
+        for r in &self.records {
+            let bounce_type = if r.bounce { "Bounce" } else { "Bounceless" };
+            obbies
+                .entry(r.obby.clone())
+                .or_default()
+                .insert(bounce_type.to_string(), (r.player.clone(), r.time));
+        }
+    
+        let main_obby = if self.ctt2_mode {
+            let mut mo = HashMap::new();
+            if !self.main_ob_bounce.is_empty() {
+                mo.insert("Bounce".to_string(), self.main_ob_bounce.clone());
+            }
+            if !self.main_ob_bounceless.is_empty() {
+                mo.insert("Bounceless".to_string(), self.main_ob_bounceless.clone());
+            }
+            if !self.main_ob_noplat.is_empty() {
+                mo.insert("NoPlat".to_string(), self.main_ob_noplat.clone());
+            }
+            Some(mo)
+        } else {
+            None
+        };
+    
+        let export = ExportTable {
+            CTT2Mode: self.ctt2_mode,
+            obbies,
+            MainObby: main_obby,
+        };
+    
+        serde_json::to_string(&export).unwrap_or_else(|_| "{}".to_string())
     }    
 
     fn add_record(&mut self) {
@@ -95,6 +152,12 @@ impl AppState {
             self.obby_input.clear();
             self.is_bounce = false;
         }
+
+        if self.real_time_enabled {
+            if let Ok(mut data) = self.http_data.lock() {
+                *data = self.generate_json_export();
+            }
+        }        
     }    
     fn add_main_ob_record(&mut self, player: String, time: f32, category: &str) {
         let list = match category {
@@ -117,6 +180,12 @@ impl AppState {
         if list.len() > max_len {
             list.truncate(max_len);
         }
+
+        if self.real_time_enabled {
+            if let Ok(mut data) = self.http_data.lock() {
+                *data = self.generate_json_export();
+            }
+        }        
     }
 
     fn import_from_clipboard(&mut self) {
@@ -239,6 +308,12 @@ impl AppState {
         }
 
         output.push_str("}");
+
+        if self.real_time_enabled {
+            if let Ok(mut data) = self.http_data.lock() {
+                *data = self.generate_json_export();
+            }
+        }        
 
         if let Ok(mut clipboard) = Clipboard::new() {
             clipboard.set_text(output).ok();
@@ -435,9 +510,36 @@ impl eframe::App for AppState {
                 if ui.button("How to Use").clicked() {
                     self.show_help = true;
                 }
+
+                if ui.checkbox(&mut self.real_time_enabled, "Real-Time Updates").clicked() {
+                    if self.real_time_enabled && self.http_thread.is_none() {
+                        let handle = spawn_http_server(self.http_data.clone());
+                        self.http_thread = Some(handle);
+                    }
+                
+                    if self.real_time_enabled {
+                        if let Ok(mut data) = self.http_data.lock() {
+                            *data = self.generate_json_export();
+                        }
+                    }
+                }                        
             });
         });
     }
+}
+
+
+fn spawn_http_server(shared_data: Arc<Mutex<String>>) -> thread::JoinHandle<()> {
+    thread::spawn(move || {
+        let server = Server::http("127.0.0.1:14855").unwrap();
+        for request in server.incoming_requests() {
+            let data = shared_data.lock().unwrap().clone();
+            let response = Response::from_string(data)
+                .with_header(tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"text/plain"[..]).unwrap());
+
+            let _ = request.respond(response);
+        }
+    })
 }
 
 fn main() -> Result<(), eframe::Error> {

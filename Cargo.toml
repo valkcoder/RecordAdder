@@ -8,3 +8,6 @@ eframe = "0.26"
 egui = "0.26"
 arboard = "3"
 mlua = { version = "0.9", features = ["luau"] }
+tiny_http = "0.12"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
